@@ -33,7 +33,7 @@ os.makedirs(CHARTS_DIR, exist_ok=True)
 
 # ── Ordered labels ─────────────────────────────────────────────────────────────
 LENGTH_ORDER = ["tiny", "short", "medium", "long", "paragraph", "extended"]
-CONFIG_ORDER = ["Supertonic-2step", "Supertonic-5step", "Kokoro-PyTorch", "Kokoro-ONNX", "Inflect-Nano"]
+CONFIG_ORDER = ["Supertonic-2step", "Supertonic-5step", "Kokoro-PyTorch", "Kokoro-ONNX", "Inflect-Nano", "Pocket-TTS"]
 
 CONFIG_COLORS = {
     "Supertonic-2step": "#2196F3",   # blue
@@ -41,6 +41,7 @@ CONFIG_COLORS = {
     "Kokoro-PyTorch":   "#FF5722",   # deep orange
     "Kokoro-ONNX":      "#FF9800",   # orange
     "Inflect-Nano":     "#4CAF50",   # green
+    "Pocket-TTS":       "#9C27B0",   # purple
 }
 
 CONFIG_LABELS = {
@@ -49,6 +50,7 @@ CONFIG_LABELS = {
     "Kokoro-PyTorch":   "Kokoro-82M (PyTorch)",
     "Kokoro-ONNX":      "Kokoro-82M (ONNX)",
     "Inflect-Nano":     "Inflect-Nano-v1 (4.6M)",
+    "Pocket-TTS":       "Pocket-TTS (100M)",
 }
 
 
@@ -82,11 +84,13 @@ def get_hardware_info():
 
     # Package versions
     venv_python = os.path.join(BASE_DIR, "venv/bin/python")
-    for pkg in ["supertonic", "kokoro", "kokoro_onnx", "onnxruntime", "torch"]:
+    for pkg in ["supertonic", "kokoro", "kokoro_onnx", "pocket_tts", "onnxruntime", "torch"]:
         try:
             result = subprocess.run(
-                [venv_python, "-c", f"import {pkg}; print(getattr({pkg}, '__version__', 'unknown'))"],
-                capture_output=True, text=True, timeout=10
+                [venv_python, "-c",
+                 f"import importlib.metadata as m, {pkg}; "
+                 f"print(getattr({pkg}, '__version__', None) or m.version('{pkg.replace('_', '-')}'))"],
+                capture_output=True, text=True, timeout=60
             )
             info[f"pkg_{pkg}"] = result.stdout.strip() or "unknown"
         except Exception:
@@ -271,6 +275,7 @@ def plot_quality_vs_speed(stats, mos_mean, output_path):
         "Inflect-Nano":   (10, 8),
         "Supertonic-2step": (-12, 10),
         "Supertonic-5step": (10, 8),
+        "Pocket-TTS":     (-14, 12),
     }
 
     fig, ax = plt.subplots(figsize=(9, 7))
@@ -324,7 +329,7 @@ def generate_report(df, stats, hw, mos_df, mos_mean, output_path):
 
     # Header
     lines += [
-        "# TTS CPU Benchmark Report: Kokoro 82M vs Supertonic 3 vs Inflect-Nano-v1",
+        "# TTS CPU Benchmark Report: Kokoro 82M vs Supertonic 3 vs Inflect-Nano-v1 vs Pocket TTS",
         "",
         f"*Generated: {now}*",
         "",
@@ -339,7 +344,7 @@ def generate_report(df, stats, hw, mos_df, mos_mean, output_path):
         "## Executive Summary",
         "",
         "This report presents a rigorous CPU-only benchmark comparing **Kokoro 82M**, **Supertonic 3**, "
-        "and **Inflect-Nano-v1** "
+        "**Inflect-Nano-v1**, and **Pocket TTS** "
         f"across {n_lengths} text lengths (12–1712 characters), {n_configs} configurations, and 5 repetitions "
         f"each ({n_runs} total timed runs). "
         "All inference was performed on CPU with no GPU acceleration. Audio quality is reported as an objective "
@@ -391,6 +396,7 @@ def generate_report(df, stats, hw, mos_df, mos_mean, output_path):
         f"| supertonic | {hw.get('pkg_supertonic', 'unknown')} |",
         f"| kokoro | {hw.get('pkg_kokoro', 'unknown')} |",
         f"| kokoro-onnx | {hw.get('pkg_kokoro_onnx', 'unknown')} |",
+        f"| pocket-tts | {hw.get('pkg_pocket_tts', 'unknown')} |",
         f"| onnxruntime | {hw.get('pkg_onnxruntime', 'unknown')} |",
         f"| torch | {hw.get('pkg_torch', 'unknown')} |",
         "",
@@ -411,6 +417,7 @@ def generate_report(df, stats, hw, mos_df, mos_mean, output_path):
         "| Kokoro-82M (PyTorch) | hexgrad/Kokoro-82M | PyTorch CPU | Default |",
         "| Kokoro-82M (ONNX) | onnx-community/Kokoro-82M-v1.0-ONNX | ONNX Runtime (CPU) | Full precision |",
         "| Inflect-Nano-v1 (4.6M) | owensong/Inflect-Nano-v1 | PyTorch CPU | FastSpeech + Snake HiFi-GAN, single male voice |",
+        "| Pocket-TTS (100M) | kyutai/pocket-tts | PyTorch CPU | Streaming LM + Mimi codec, preset voice 'alba' |",
         "",
         "### Text Corpus",
         "",
@@ -446,7 +453,8 @@ def generate_report(df, stats, hw, mos_df, mos_mean, output_path):
         "  - **Latency** = wall-clock seconds per synthesis call",
         "  - **Throughput** = input_chars / wall_time (chars/sec)",
         "- **Voice**: Supertonic voice 'F1' (female); Kokoro voice 'af_heart' (female); "
-        "Inflect-Nano-v1 default voice 'mark' (male, single-speaker)",
+        "Inflect-Nano-v1 default voice 'mark' (male, single-speaker); "
+        "Pocket TTS preset voice 'alba' (female, fixed across all runs)",
         "- **Audio saved**: 1 WAV sample per (config × text_length) for quality verification",
         "",
         "---",
@@ -586,6 +594,7 @@ def generate_report(df, stats, hw, mos_df, mos_mean, output_path):
     step_cost = st5_rtf / st2_rtf if st2_rtf > 0 else float("nan")
 
     inflect_rtf = overall_rtf.get("Inflect-Nano", float("nan"))
+    pocket_rtf = overall_rtf.get("Pocket-TTS", float("nan"))
 
     def _mos(cfg):
         return mos_mean.get(cfg, float("nan")) if mos_mean is not None else float("nan")
@@ -635,17 +644,34 @@ def generate_report(df, stats, hw, mos_df, mos_mean, output_path):
         f"(**{_mos('Kokoro-ONNX'):.2f}** vs **{_mos('Kokoro-PyTorch'):.2f}**). The two are perceptually "
         f"interchangeable; the choice is a deployment/packaging decision, not a quality one.",
         "",
-        "### 5. Practical Implications",
+        "### 5. Pocket TTS: the newcomer — voice cloning on a CPU",
+        "",
+        f"Pocket TTS (Kyutai, ~100M params, MIT-licensed) is the newest entrant and a different "
+        f"kind of model: a streaming language model over a neural audio codec (Mimi), rather than a "
+        f"one-shot acoustic model + vocoder. On this CPU it runs at mean RTF **{pocket_rtf:.4f}** "
+        f"({1.0/pocket_rtf:.1f}× real-time) with a UTMOS of **{_mos('Pocket-TTS'):.2f}** — putting it "
+        f"in the same quality tier as Kokoro and Supertonic-5step while staying comfortably real-time. "
+        f"Unlike the FastSpeech-style Inflect-Nano, its UTMOS and its actual sound agree: it is clean "
+        f"and natural, not buzzy.",
+        "",
+        "What the speed/quality table cannot show is its headline feature: **zero-shot voice cloning "
+        "from ~5 seconds of reference audio**, capturing accent, tone, and even recording character. "
+        "None of the other models here do this — they ship a fixed set of voices. We benchmarked "
+        "Pocket TTS on a single preset voice ('alba') to keep the comparison fair, so the numbers "
+        "above understate what the model is actually for.",
+        "",
+        "### 6. Practical Implications",
         "",
         "| Use Case | Recommended Config | Reason |",
         "|----------|-------------------|--------|",
         f"| Highest quality (human-like) | Kokoro-82M (PyTorch or ONNX) | Top UTMOS (~{max(_mos('Kokoro-PyTorch'), _mos('Kokoro-ONNX')):.2f}), Apache-2.0 weights |",
+        f"| Voice cloning / custom voices | Pocket-TTS | Clones a voice from ~5s audio; MOS {_mos('Pocket-TTS'):.2f} at {1.0/pocket_rtf:.1f}× real-time, MIT license |",
         f"| Balanced speed + quality | Supertonic-3 (5-step) | MOS {_mos('Supertonic-5step'):.2f} at {1.0/st5_rtf:.1f}× real-time |",
         f"| Tiny footprint / edge, quality secondary | Inflect-Nano-v1 | 4.6M params, {1.0/inflect_rtf:.1f}× real-time, but buzzy/robotic (UTMOS {_mos('Inflect-Nano'):.2f} over-rates it) |",
         f"| Latency at any cost (prototyping) | Supertonic-3 (2-step) | Fastest, but MOS {_mos('Supertonic-2step'):.2f} (robotic) |",
         "| PyTorch ecosystem / fine-tuning | Kokoro-82M (PyTorch) | Native PyTorch, easy to extend |",
         "",
-        "### 6. Reproducibility Notes",
+        "### 7. Reproducibility Notes",
         "",
         "- All runs performed on a single CPU process with default thread counts",
         "- No process pinning or CPU affinity was set",
@@ -728,7 +754,12 @@ def print_summary_table(stats):
         print(row)
 
     print("=" * 80)
-    print("\nAll RTF values < 1.0 → all configs are faster than real-time on this CPU")
+    max_cell_rtf = rtf_pivot.max().max()
+    if max_cell_rtf < 1.0:
+        print("\nAll RTF values < 1.0 → all configs are faster than real-time on this CPU")
+    else:
+        n_slow = int((rtf_pivot >= 1.0).sum().sum())
+        print(f"\nMax cell RTF = {max_cell_rtf:.4f}; {n_slow} config×length cell(s) at/above real-time (RTF ≥ 1.0)")
 
     # Throughput summary
     thr_pivot = stats.pivot_table(

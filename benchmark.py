@@ -1,7 +1,7 @@
 """
-TTS CPU Benchmark: Supertonic 3 vs Kokoro 82M
-==============================================
-4 configs × 6 text lengths × 5 reps = 120 timed runs (CPU-only)
+TTS CPU Benchmark: Kokoro 82M vs Supertonic 3 vs Inflect-Nano-v1 vs Pocket TTS
+=============================================================================
+6 configs × 6 text lengths × 5 reps = 180 timed runs (CPU-only)
 """
 
 import os
@@ -241,6 +241,41 @@ class InflectNanoRunner:
         return np.asarray(audio, dtype=np.float32).flatten(), 24000
 
 
+class PocketTTSRunner:
+    """Pocket TTS (Kyutai) — ~100M-param streaming TTS, CPU-first, 24kHz, MIT license.
+
+    Ships as the `pocket-tts` pip package. We load the default English model once,
+    then reuse a fixed preset voice ('alba') across all runs so the comparison
+    stays single-voice and apples-to-apples with the other models. generate_audio()
+    chunks the text internally (max_tokens per chunk) and returns the *full* waveform,
+    so long inputs are synthesized in full — no silent length cap.
+    """
+
+    def __init__(self, voice: str = "alba"):
+        self.name = "Pocket-TTS"
+        self.voice = voice
+        self._model = None
+        self._voice_state = None
+
+    def load(self):
+        from pocket_tts import TTSModel
+        self._model = TTSModel.load_model()   # language=None → default English bundle
+        self._model.to("cpu")
+        # Preset voice name resolves to a reference clip; the resulting state is
+        # reused every rep. generate_audio(copy_state=True) deep-copies it per call,
+        # so the cached state is never mutated.
+        self._voice_state = self._model.get_state_for_audio_prompt(self.voice)
+        print(f"  [{self.name}] Model loaded. SR={self._model.sample_rate}  voice='{self.voice}'")
+
+    def synthesize(self, text: str):
+        """Returns (samples_np, sample_rate)"""
+        audio = self._model.generate_audio(self._voice_state, text)
+        samples = np.asarray(
+            audio.numpy() if hasattr(audio, "numpy") else audio, dtype=np.float32
+        ).flatten()
+        return samples, int(self._model.sample_rate)  # 24000
+
+
 # ── Benchmark runner ───────────────────────────────────────────────────────────
 
 def run_config(runner, rows: list):
@@ -331,10 +366,10 @@ def run_config(runner, rows: list):
 
 
 def main():
-    print("TTS CPU Benchmark: Supertonic 3 vs Kokoro 82M vs Inflect-Nano-v1")
+    print("TTS CPU Benchmark: Kokoro 82M vs Supertonic 3 vs Inflect-Nano-v1 vs Pocket TTS")
     print(f"Text lengths: {TEXT_LENGTH_ORDER}")
     print(f"Reps per cell: {REPS}")
-    print(f"Total planned runs: {len(TEXT_LENGTH_ORDER) * 5 * REPS} (5 configs)")
+    print(f"Total planned runs: {len(TEXT_LENGTH_ORDER) * 6 * REPS} (6 configs)")
     print()
 
     # Check CPU info
@@ -355,6 +390,7 @@ def main():
         KokoroPyTorchRunner(),
         KokoroONNXRunner(),
         InflectNanoRunner(),
+        PocketTTSRunner(),
     ]
 
     rows = []
